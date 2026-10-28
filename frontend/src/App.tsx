@@ -54,8 +54,32 @@ function Chart({ title, subtitle, data, kind }: { title: string; subtitle: strin
   )
 }
 
+function AboutPage() {
+  return <section className="about-page">
+    <div className="eyebrow"><span className="eyebrow-dot" /> INFORMACIÓN DEL SISTEMA</div>
+    <h1>Acerca de <span>la plataforma</span></h1>
+    <p className="about-lead">Una herramienta para organizar y explorar información sobre trayectorias educativas en Argentina.</p>
+
+    <article className="about-source">
+      <div className="about-source-icon">↗</div>
+      <div><span className="section-kicker">ORIGEN DE LOS DATOS</span><h2>Relevamiento Anual de Educación</h2>
+        <p>El proyecto trabaja con bases usuarias por escuela del Relevamiento Anual (RA), producido por la Secretaría de Educación de la Nación. El RA es un relevamiento censal anual del sistema educativo, su base de trayectoria incluye alumnos promovidos, no promovidos y salidos, con desgloses por establecimiento, jurisdicción, sector, ámbito, oferta y sexo. Los archivos se incorporan manualmente: la plataforma no los descarga de Nación.</p>
+        <div className="source-links"><a href="https://www.argentina.gob.ar/capital-humano/estadisticas-educativas" target="_blank" rel="noreferrer">Estadísticas educativas nacionales ↗</a><a href="https://www.argentina.gob.ar/sites/default/files/diccionario_de_datos.pdf" target="_blank" rel="noreferrer">Diccionario de las bases usuarias ↗</a></div>
+      </div>
+    </article>
+
+    <div className="about-section-heading"><span className="section-kicker">QUÉ SE ANALIZA</span><h2>Dimensiones de la trayectoria</h2><p>El procesador convierte las columnas reconocidas en observaciones para facilitar su consulta y comparación.</p></div>
+    <div className="about-grid">
+      <article className="about-card"><span className="about-number">01</span><h3>Territorio</h3><p>Los datos están referenciados por provincia y departamento. Cuando están presentes, también se guardan sector (privado/público) y ámbito (urbano/rural).</p><div className="tag-row"><span>Provincia</span><span>Departamento</span><span>Sector</span><span>Ámbito</span></div></article>
+      <article className="about-card"><span className="about-number">02</span><h3>Indicadores educativos</h3><p>Se reconocen columnas vinculadas con promoción, no promoción, regularidad, entradas, sobreedad, nivel inicial y egresos.</p><div className="tag-row"><span>Promoción</span><span>Regularidad</span><span>Egresos</span></div></article>
+      <article className="about-card"><span className="about-number">03</span><h3>Año de estudio</h3><p>Se separan los datos por año cursado, teniendo en cuenta primaria y secundaria.</p><div className="tag-row"><span>Año cursado</span><span>Grupo de años</span><span>Categorías especiales</span></div></article>
+      <article className="about-card"><span className="about-number">04</span><h3>Sexo</h3><p>Para cada medición, se especifica el total de todos los sexos, y el total de mujeres, permitiendo distinguir por género.</p><div className="tag-row"><span>Total</span><span>Mujeres</span></div></article>
+    </div>
+  </section>
+}
+
 export default function App() {
-  const [section, setSection] = useState<'statistics' | 'upload'>('statistics')
+  const [section, setSection] = useState<'statistics' | 'upload' | 'about'>('statistics')
   const [uploadYear, setUploadYear] = useState(String(new Date().getFullYear()))
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
@@ -162,6 +186,9 @@ export default function App() {
           <button className={section === 'upload' ? 'nav-item active' : 'nav-item'} onClick={() => setSection('upload')}>
             <span className="nav-icon">↑</span> Subir archivo
           </button>
+          <button className={section === 'about' ? 'nav-item active' : 'nav-item'} onClick={() => setSection('about')}>
+            <span className="nav-icon">ⓘ</span> Acerca de
+          </button>
         </nav>
         <div className="sidebar-bottom"><span className="status-dot" /> SISTEMA DE DATOS EDUCATIVOS</div>
       </aside>
@@ -196,7 +223,7 @@ export default function App() {
             <p className="privacy-note"><span aria-hidden="true">⌑</span> Los datos se procesan y almacenan en la base del sistema.</p>
           </form>
           <footer className="page-footer"><span>PLATAFORMA DE SOPORTE A DECISIONES</span><span>EDUCACIÓN · ARGENTINA</span></footer>
-        </section> : <section className="dashboard">
+        </section> : section === 'about' ? <AboutPage /> : <section className="dashboard">
           <div className="dashboard-title-row">
             <div><div className="eyebrow"><span className="eyebrow-dot" /> PANEL DE ANÁLISIS</div><h1>Estadísticas</h1><p className="intro">Explorá los principales datos de trayectoria educativa.</p></div>
             <label className="dashboard-year"><span>AÑO DEL DATASET</span><select value={selectedYear} onChange={(event) => setSelectedYear(event.target.value)} disabled={!years.length}>
