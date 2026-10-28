@@ -37,3 +37,7 @@ npm run dev
 Abrir <http://localhost:5173>. Vite reenvía las llamadas `/api` a la API local en el puerto `8000`.
 
 La pantalla envía `year` y `file` como `multipart/form-data` a `POST /api/imports`. La API responde con el identificador de importación y la cantidad de observaciones guardadas.
+
+## Estadísticas
+
+La navegación lateral permite abrir **Estadísticas** y elegir entre los años importados. El panel consulta `GET /api/statistics/years` y `GET /api/statistics?year=2025&indicator=promovidos`, y muestra cobertura, observaciones y gráficos por provincia y año de estudio. Si se vuelve a importar un año, el panel usa la importación más reciente de ese año para evitar sumar cargas repetidas.

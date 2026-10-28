@@ -5,6 +5,7 @@ from tempfile import NamedTemporaryFile
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import models
@@ -30,6 +31,91 @@ ALLOWED_EXTENSIONS = {".csv", ".txt", ".xlsx", ".xls"}
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/statistics/years")
+def statistics_years(db: Session = Depends(get_db)):
+    """Años cargados, mostrando la importación más reciente de cada uno."""
+    latest_ids = (
+        db.query(func.max(ImportBatch.id).label("id"))
+        .group_by(ImportBatch.year)
+        .subquery()
+    )
+    batches = (
+        db.query(ImportBatch)
+        .join(latest_ids, ImportBatch.id == latest_ids.c.id)
+        .order_by(ImportBatch.year.desc())
+        .all()
+    )
+    return [
+        {"year": batch.year, "import_id": batch.id, "file_name": batch.file_name}
+        for batch in batches
+    ]
+
+
+@app.get("/api/statistics")
+def statistics(
+    year: int,
+    indicator: str = "promovidos",
+    db: Session = Depends(get_db),
+):
+    """Resumen y agregaciones de la última importación del año seleccionado."""
+    batch = (
+        db.query(ImportBatch)
+        .filter(ImportBatch.year == year)
+        .order_by(ImportBatch.id.desc())
+        .first()
+    )
+    if batch is None:
+        raise HTTPException(404, "No hay datos cargados para ese año.")
+
+    base = db.query(Observation).filter(Observation.import_id == batch.id)
+    total_observations = base.count()
+    provinces = base.with_entities(func.count(func.distinct(Observation.provincia))).scalar() or 0
+    departments = base.with_entities(
+        func.count(func.distinct(Observation.departamento + "|" + Observation.provincia))
+    ).scalar() or 0
+    totals = {
+        name: value or 0
+        for name, value in (
+            base.filter(Observation.sex == "total")
+            .with_entities(Observation.indicator, func.sum(Observation.value))
+            .group_by(Observation.indicator)
+            .all()
+        )
+    }
+
+    province_rows = (
+        base.filter(Observation.indicator == indicator, Observation.sex == "total")
+        .with_entities(Observation.provincia, func.sum(Observation.value).label("value"))
+        .group_by(Observation.provincia)
+        .order_by(func.sum(Observation.value).desc())
+        .all()
+    )
+    study_rows = (
+        base.filter(Observation.indicator == indicator, Observation.sex == "total")
+        .with_entities(Observation.study_year, func.sum(Observation.value).label("value"))
+        .group_by(Observation.study_year)
+        .all()
+    )
+
+    graduates = totals.get("primaria_egresados", 0) + totals.get("secundaria_egresados", 0)
+    return {
+        "year": batch.year,
+        "import_id": batch.id,
+        "file_name": batch.file_name,
+        "summary": {
+            "observations": total_observations,
+            "provinces": provinces,
+            "departments": departments,
+            "promoted": totals.get("promovidos", 0),
+            "not_promoted": totals.get("nopromo", 0),
+            "graduates": graduates,
+        },
+        "available_indicators": sorted(totals.keys()),
+        "by_province": [{"label": name, "value": float(value or 0)} for name, value in province_rows],
+        "by_study_year": [{"label": name, "value": float(value or 0)} for name, value in study_rows],
+    }
 
 
 @app.post("/api/imports", response_model=UploadResponse, status_code=201)
