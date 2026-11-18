@@ -42,3 +42,15 @@ class Observation(Base):
     source_column: Mapped[str] = mapped_column(String(160), nullable=False)
 
     import_batch: Mapped[ImportBatch] = relationship(back_populates="observations")
+
+
+class PopulationEstimate(Base):
+    """Población estimada por provincia/departamento, sexo y año."""
+
+    __tablename__ = "population_estimates"
+
+    provincia: Mapped[str] = mapped_column(String(160), primary_key=True)
+    departamento: Mapped[str] = mapped_column(String(160), primary_key=True)
+    sexo: Mapped[str] = mapped_column(String(20), primary_key=True)
+    year: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    poblacion: Mapped[int] = mapped_column(Integer, nullable=False)
