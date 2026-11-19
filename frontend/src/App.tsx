@@ -26,6 +26,22 @@ type Statistics = {
   by_study_year: ChartPoint[]
 }
 
+type Section = 'summary' | 'equality' | 'predictive' | 'upload' | 'about'
+const SECTION_PATHS: Record<Section, string> = {
+  summary: '/resumen', equality: '/igualdad', predictive: '/predictivo', upload: '/subir-archivo', about: '/acerca-de',
+}
+function sectionFromPath(path: string): Section {
+  return (Object.entries(SECTION_PATHS).find(([, route]) => route === path)?.[0] as Section | undefined) ?? 'summary'
+}
+
+function NavIcon({ kind }: { kind: 'document' | 'scale' | 'sparkle' }) {
+  return <svg className="nav-icon-svg" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    {kind === 'document' && <><path d="M6 3.75h8l4 4V20a.75.75 0 0 1-.75.75h-11.5A.75.75 0 0 1 5 20V4.5a.75.75 0 0 1 .75-.75Z"/><path d="M14 4v4h4M8.5 12h7M8.5 15.5h7"/></>}
+    {kind === 'scale' && <><path d="M12 4v15M8 20h8M5 7h14M12 4l-2-2M12 4l2-2"/><path d="m6 7-3 6h6L6 7Zm12 0-3 6h6l-3-6Z"/><path d="M3 13c0 2 1.2 3 3 3s3-1 3-3m6 0c0 2 1.2 3 3 3s3-1 3-3"/></>}
+    {kind === 'sparkle' && <><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15ZM5 3l.7 1.8L7.5 5.5l-1.8.7L5 8l-.7-1.8-1.8-.7 1.8-.7L5 3Z"/></>}
+  </svg>
+}
+
 const INDICATOR_LABELS: Record<string, string> = {
   promovidos: 'Promovidos', nopromo: 'No promovidos', regulares: 'Alumnos regulares',
   entrados: 'Entrados', inicial: 'Nivel inicial', scp: 'Sobreedad con promoción',
@@ -79,7 +95,16 @@ function AboutPage() {
 }
 
 export default function App() {
-  const [section, setSection] = useState<'statistics' | 'upload' | 'about'>('statistics')
+  const [section, setSection] = useState<Section>(() => sectionFromPath(window.location.hash.replace(/^#/, '')))
+  function navigate(next: Section) {
+    setSection(next)
+    if (window.location.hash !== `#${SECTION_PATHS[next]}`) window.location.hash = SECTION_PATHS[next]
+  }
+  useEffect(() => {
+    const syncRoute = () => setSection(sectionFromPath(window.location.hash.replace(/^#/, '')))
+    window.addEventListener('hashchange', syncRoute)
+    return () => window.removeEventListener('hashchange', syncRoute)
+  }, [])
   const [uploadYear, setUploadYear] = useState(String(new Date().getFullYear()))
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
@@ -168,7 +193,7 @@ export default function App() {
   return (
     <div className="app-layout">
       <aside className="sidebar">
-        <a className="brand" href="#inicio" aria-label="Gestión de Trayectorias Educativas, inicio">
+        <a className="brand" href="#inicio" aria-label="Radar Educativo, inicio">
           <span className="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 32 32" focusable="false">
               <path d="M4 12.5 16 6l12 6.5L16 19 4 12.5Z" />
@@ -176,17 +201,23 @@ export default function App() {
               <path d="M27 13v7" />
               <circle cx="27" cy="22" r="1.5" />
             </svg>
-          </span><span>Gestión de <b>Trayectorias Educativas</b></span>
+          </span><span><b>Radar Educativo</b></span>
         </a>
         <div className="sidebar-caption">MENÚ PRINCIPAL</div>
         <nav className="side-nav" aria-label="Navegación principal">
-          <button className={section === 'statistics' ? 'nav-item active' : 'nav-item'} onClick={() => setSection('statistics')}>
-            <span className="nav-icon">▥</span> Estadísticas
+          <button className={section === 'summary' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('summary')} aria-current={section === 'summary' ? 'page' : undefined}>
+            <NavIcon kind="document" /> Resumen
           </button>
-          <button className={section === 'upload' ? 'nav-item active' : 'nav-item'} onClick={() => setSection('upload')}>
+          <button className={section === 'equality' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('equality')} aria-current={section === 'equality' ? 'page' : undefined}>
+            <NavIcon kind="scale" /> Igualdad
+          </button>
+          <button className={section === 'predictive' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('predictive')} aria-current={section === 'predictive' ? 'page' : undefined}>
+            <NavIcon kind="sparkle" /> Predictivo
+          </button>
+          <button className={section === 'upload' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('upload')}>
             <span className="nav-icon">↑</span> Subir archivo
           </button>
-          <button className={section === 'about' ? 'nav-item active' : 'nav-item'} onClick={() => setSection('about')}>
+          <button className={section === 'about' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('about')}>
             <span className="nav-icon">ⓘ</span> Acerca de
           </button>
         </nav>
@@ -194,7 +225,7 @@ export default function App() {
       </aside>
 
       <main className="main-area">
-        <header className="topbar"><span className="topbar-label">Gestión de Trayectorias Educativas</span><span className="country-tag">ARGENTINA <span>●</span></span></header>
+        <header className="topbar"><span className="topbar-label">Radar Educativo</span><span className="country-tag">ARGENTINA <span>●</span></span></header>
 
         {section === 'upload' ? <section className="content upload-content" id="inicio">
           <div className="eyebrow"><span className="eyebrow-dot" /> DATOS EDUCATIVOS · ARGENTINA</div>
@@ -223,9 +254,18 @@ export default function App() {
             <p className="privacy-note"><span aria-hidden="true">⌑</span> Los datos se procesan y almacenan en la base del sistema.</p>
           </form>
           <footer className="page-footer"><span>PLATAFORMA DE SOPORTE A DECISIONES</span><span>EDUCACIÓN · ARGENTINA</span></footer>
-        </section> : section === 'about' ? <AboutPage /> : <section className="dashboard">
+        </section> : section === 'about' ? <AboutPage /> : section === 'equality' || section === 'predictive' ? <section className="dashboard">
+          <div className="dashboard-placeholder">
+            <div className="eyebrow"><span className="eyebrow-dot" /> PANEL DE ANÁLISIS</div>
+            <h1>{section === 'equality' ? 'Igualdad' : 'Predictivo'}</h1>
+            <p className="intro">{section === 'equality'
+              ? 'Explorá las diferencias en las trayectorias por sexo, ámbito y sector de gestión.'
+              : 'Seleccioná Nación o una provincia para consultar la predicción de la tasa de no promoción.'}</p>
+            <div className="coming-soon"><span className="empty-icon">{section === 'equality' ? '⚖' : '✦'}</span><h2>En preparación</h2><p>Esta página se completará en una próxima etapa.</p></div>
+          </div>
+        </section> : <section className="dashboard">
           <div className="dashboard-title-row">
-            <div><div className="eyebrow"><span className="eyebrow-dot" /> PANEL DE ANÁLISIS</div><h1>Estadísticas</h1><p className="intro">Explorá los principales datos de trayectoria educativa.</p></div>
+            <div><div className="eyebrow"><span className="eyebrow-dot" /> PANEL DE ANÁLISIS</div><h1>Resumen</h1><p className="intro">Explorá los principales datos de trayectoria educativa.</p></div>
             <label className="dashboard-year"><span>AÑO DEL DATASET</span><select value={selectedYear} onChange={(event) => setSelectedYear(event.target.value)} disabled={!years.length}>
               {years.length ? years.map((item) => <option key={item.year} value={item.year}>{item.year}</option>) : <option value="">Sin datos</option>}
             </select></label>
@@ -233,7 +273,7 @@ export default function App() {
 
           {statsError && <div className="notice error" role="alert">{statsError}</div>}
           {loadingStats && years.length > 0 ? <div className="loading-panel"><span className="spinner dark" /> Cargando estadísticas…</div>
-            : !years.length && !statsError ? <div className="empty-panel"><span className="empty-icon">▤</span><h2>Todavía no hay datos cargados</h2><p>Subí un archivo de trayectoria para empezar a explorar las estadísticas.</p><button className="secondary-button" onClick={() => setSection('upload')}>Ir a subir archivo →</button></div>
+            : !years.length && !statsError ? <div className="empty-panel"><span className="empty-icon">▤</span><h2>Todavía no hay datos cargados</h2><p>Subí un archivo de trayectoria para empezar a explorar las estadísticas.</p><button className="secondary-button" onClick={() => navigate('upload')}>Ir a subir archivo →</button></div>
               : statistics && <>
                 <div className="data-source"><span>Última importación del año</span><b>{statistics.file_name}</b><span>· {formatNumber(summary?.observations ?? 0)} observaciones</span></div>
                 <div className="stats-grid">
