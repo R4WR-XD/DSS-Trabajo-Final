@@ -92,6 +92,9 @@ function NavIcon({ kind }: { kind: 'document' | 'scale' | 'sparkle' | 'chart' })
 
 const formatNumber = (value: number) => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 }).format(value)
 const formatPercent = (value: number) => `${new Intl.NumberFormat('es-AR', { maximumFractionDigits: 1, minimumFractionDigits: 1 }).format(value)}%`
+function Insight({ children, title = 'Lectura del indicador' }: { children: string | string[]; title?: string }) {
+  return <aside className="insight-card"><span>{title}</span><p>{Array.isArray(children) ? children.join('') : children}</p></aside>
+}
 const MAP_METRICS: { id: MapMetric; label: string; description: string }[] = [
   { id: 'enrollment_rate', label: 'Matrícula', description: 'Matrícula inicial sobre población estimada de 4 a 17 años' },
   { id: 'promotion_rate', label: 'Promoción', description: 'Promovidos sobre promovidos + no promovidos' },
@@ -332,7 +335,7 @@ function StudyYearHistogram({
     ? 'Participación de cada grado/año en la matrícula inicial total'
     : `Tasa seleccionada para ${territoryName.toLocaleLowerCase('es')}`
 
-  return <article className="study-year-panel chart-card">
+  return <div className="insight-group"><article className="study-year-panel chart-card">
     <div className="chart-heading"><div><h3>{title}</h3><p>{subtitle}</p></div></div>
     {loading ? <div className="chart-empty"><span className="spinner dark" /> Calculando distribución…</div>
       : error ? <div className="chart-empty">{error}</div>
@@ -354,9 +357,7 @@ function StudyYearHistogram({
               const shortLabel = point.study_year <= 6 ? `${point.study_year}°G` : `${point.study_year - 6}°A`
               return <g key={point.study_year}>
                 {value !== null && <>
-                  <rect x={x} y={y} width={barWidth} height={barHeight} rx="3" className="study-year-bar">
-                    <title>{point.label}: {formatPercent(value)}</title>
-                  </rect>
+                  <rect x={x} y={y} width={barWidth} height={barHeight} rx="3" className="study-year-bar"><title>{point.label}: {formatPercent(value)}</title></rect>
                   <text x={x + barWidth / 2} y={Math.max(plot.top + 11, y - 5)} textAnchor="middle" className="study-year-value">{formatPercent(value)}</text>
                 </>}
                 <text x={x + barWidth / 2} y={plot.bottom + 18} textAnchor="middle" className="study-year-axis-label">{shortLabel}</text>
@@ -367,10 +368,23 @@ function StudyYearHistogram({
             <text x={plot.left + slotWidth * 9} y="272" textAnchor="middle" className="study-year-group-label">Secundaria · 1° a 6° año</text>
           </svg>}
   </article>
+    {!loading && !error && values.length > 0 && <Insight title="Lectura por año de estudio">{(() => {
+      const valid = data.filter((point) => point.value !== null)
+      const peak = valid.reduce((best, point) => point.value! > best.value! ? point : best)
+      const low = valid.reduce((best, point) => point.value! < best.value! ? point : best)
+      const gap = peak.value! - low.value!
+      return gap < 2 ? 'La matrícula se reparte de manera similar entre los años. No se destaca un grado en particular; conviene seguir observando si esta distribución se mantiene en los próximos períodos.' : `Hay más estudiantes en ${peak.label} y menos en ${low.label}. Puede ser útil mirar qué ocurre en el paso entre esos años y si las escuelas cuentan con apoyos para acompañar a quienes cambian de ciclo.`
+    })()}</Insight>}
+  </div>
 }
 
 function EqualityBarCard({ title, subtitle, data, colors }: { title: string; subtitle: string; data: EqualityPoint[]; colors: string[] }) {
-  return <article className="chart-card equality-chart-card">
+  const valid = data.filter((item): item is EqualityPoint & { rate: number } => item.rate !== null)
+  const gap = valid.length > 1 ? Math.max(...valid.map((item) => item.rate)) - Math.min(...valid.map((item) => item.rate)) : null
+  const lower = valid.length > 1 ? valid.reduce((a, b) => a.rate < b.rate ? a : b) : null
+  const higher = valid.length > 1 ? valid.reduce((a, b) => a.rate > b.rate ? a : b) : null
+  const insight = gap === null ? 'Todavía no hay información suficiente para saber si la experiencia de promoción es similar entre los grupos. Completá o revisá los datos para orientar decisiones con mayor confianza.' : gap < 2 ? `La promoción es similar entre ${valid.map((item) => item.label.toLocaleLowerCase('es')).join(' y ')}. Es una buena señal para sostener el acompañamiento y seguir mirando si se mantiene en otros años y escuelas.` : `La promoción es menor en ${lower!.label.toLocaleLowerCase('es')} que en ${higher!.label.toLocaleLowerCase('es')}. Sería útil conversar con las escuelas de este grupo para conocer qué obstáculos enfrentan los estudiantes y qué apoyos podrían fortalecer su continuidad.`
+  return <div className="insight-group"><article className="chart-card equality-chart-card">
     <div className="chart-heading"><div><h3>{title}</h3><p>{subtitle}</p></div></div>
     <div className="equality-bars">
       {data.map((item, index) => <div className="equality-bar-row" key={item.label}>
@@ -380,7 +394,7 @@ function EqualityBarCard({ title, subtitle, data, colors }: { title: string; sub
       </div>)}
     </div>
     <div className="equality-axis"><span>0%</span><span>50%</span><span>100%</span></div>
-  </article>
+  </article><Insight>{insight}</Insight></div>
 }
 
 function PredictionChart({ data, year, forecasts }: { data: NonNullable<PredictionResult['history']>; year: number; forecasts: NonNullable<PredictionResult['forecast_series']> }) {
@@ -725,7 +739,16 @@ export default function App() {
               : predictionResult && !predictionResult.eligible ? <div className="empty-panel prediction-empty"><span className="empty-icon">⌛</span><h2>Aún no alcanza el histórico</h2><p>{predictionResult.message}</p><p className="prediction-years">Años válidos consecutivos disponibles: {predictionResult.available_years?.join(', ') || 'ninguno'}</p><button className="secondary-button" onClick={() => navigate('upload')}>Ir a subir archivo →</button></div>
                 : predictionResult?.eligible && predictionResult.history && predictionResult.forecast_series && typeof predictionResult.forecast === 'number' && <>
                   <div className="prediction-summary"><div><span>PRONÓSTICO PARA {predictionResult.year}</span><strong>{formatPercent(predictionResult.forecast)}</strong><small>Tasa de no promoción proyectada</small></div><div><span>HISTÓRICO UTILIZADO</span><strong>{predictionResult.history.length} años</strong><small>{predictionResult.history[0]?.year}–{predictionResult.history[predictionResult.history.length - 1]?.year}</small></div><div><span>MODELO</span><strong>Holt</strong><small>Tendencia amortiguada</small></div></div>
-                  <article className="prediction-panel"><div className="panel-heading"><div><h3>Histórico y proyección</h3><p>{predictionResult.province} · todos los ámbitos · ambos sexos</p></div><span className="panel-icon">✦</span></div><PredictionChart data={predictionResult.history} year={predictionResult.year} forecasts={predictionResult.forecast_series} /></article>
+                  {(() => {
+                    const latest = predictionResult.history[predictionResult.history.length - 1]
+                    const change = predictionResult.forecast - latest.rate
+                    const forecastMessage = Math.abs(change) < 1
+                      ? 'Se espera que la no promoción se mantenga en un nivel parecido. Las acciones de acompañamiento actuales pueden sostenerse y revisarse cuando estén disponibles los próximos datos.'
+                      : change > 0
+                        ? 'La proyección anticipa que podría aumentar la cantidad de estudiantes que no promocionan. Puede servir para conversar con las escuelas sobre apoyos tempranos, recuperación de aprendizajes y seguimiento de inasistencias.'
+                        : 'La proyección anticipa una posible mejora en la promoción. Conviene identificar qué apoyos y prácticas están ayudando a los estudiantes para sostenerlos en el próximo período.'
+                    return <div className="insight-group"><article className="prediction-panel"><div className="panel-heading"><div><h3>Histórico y proyección</h3><p>{predictionResult.province} · todos los ámbitos · ambos sexos</p></div><span className="panel-icon">✦</span></div><PredictionChart data={predictionResult.history} year={predictionResult.year} forecasts={predictionResult.forecast_series} /></article><Insight title="¿Qué puede orientar este pronóstico?">{forecastMessage} La proyección es una referencia para planificar, no un resultado confirmado.</Insight></div>
+                  })()}
                   <p className="methodology-note"><strong>Cómo se calcula:</strong> tasa de no promoción = no promovidos / (promovidos + no promovidos) × 100. Se usa Holt con tendencia amortiguada y los parámetros de la notebook (nivel 0,6; tendencia 0,2; amortiguación 0,8). Cuando el histórico incluye 2020–2022, 2021 se reemplaza por el promedio de esos años vecinos; para predicciones anteriores a 2022 se usa solo la información previa, como en la validación temporal.</p>
                 </>}
           </>}
@@ -767,6 +790,24 @@ export default function App() {
                     <TerritoryDetailList data={territoryMetrics} metric={mapMetric} level={selectedProvince ? 'department' : 'province'} />
                   </article>
                 </div>
+                {(() => {
+                  const valid = territoryMetrics.filter((item) => typeof item[mapMetric] === 'number').map((item) => ({ name: item.name, value: item[mapMetric] as number }))
+                  if (!valid.length) return <Insight>No hay datos suficientes para comparar territorios.</Insight>
+                  const sorted = [...valid].sort((a, b) => a.value - b.value)
+                  const low = sorted[0], high = sorted[sorted.length - 1]
+                  const gap = high.value - low.value
+                  if (gap < 5) return <Insight title="¿Qué nos muestra el mapa?">Los resultados son parecidos entre los territorios. Se puede sostener el seguimiento general y prestar atención a las necesidades particulares de cada comunidad.</Insight>
+                  const lowerName = (mapMetric === 'promotion_rate' || mapMetric === 'enrollment_rate') ? low.name : high.name
+                  const higherName = lowerName === low.name ? high.name : low.name
+                  const implication = mapMetric === 'promotion_rate'
+                    ? `La promoción es menor en ${lowerName}. Puede ser un buen lugar para conversar con las escuelas sobre los apoyos que necesitan los estudiantes para avanzar.`
+                    : mapMetric === 'enrollment_rate'
+                      ? `La matrícula registrada es menor en ${lowerName}. Conviene revisar si hay niñas, niños y adolescentes que no están llegando a la escuela o si hace falta mejorar el registro local.`
+                      : mapMetric === 'not_promotion_rate'
+                        ? `La no promoción es mayor en ${lowerName}. Sería útil priorizar el diálogo con sus escuelas para conocer las dificultades y reforzar el acompañamiento durante el año.`
+                        : `Los salidos sin pase son más frecuentes en ${lowerName}. Se recomienda revisar las situaciones de desvinculación y fortalecer el contacto con estudiantes y familias.`
+                  return <Insight title="¿Dónde conviene mirar primero?">{implication} {higherName} presenta el resultado más favorable en este indicador; comparar las condiciones locales puede ayudar a identificar apoyos que se puedan compartir.</Insight>
+                })()}
                 <StudyYearHistogram
                   data={studyYearPoints}
                   metric={mapMetric}
