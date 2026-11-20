@@ -60,9 +60,9 @@ type EqualityStatistics = {
   by_area: EqualityPoint[]
 }
 
-type Section = 'summary' | 'equality' | 'predictive' | 'reports' | 'upload' | 'about'
+type Section = 'summary' | 'equality' | 'predictive' | 'reports' | 'upload'
 const SECTION_PATHS: Record<Section, string> = {
-  summary: '/trayectorias', equality: '/igualdad', predictive: '/predictivo', reports: '/reportes', upload: '/subir-archivo', about: '/acerca-de',
+  summary: '/trayectorias', equality: '/igualdad', predictive: '/predictivo', reports: '/reportes', upload: '/subir-archivo',
 }
 type AppRoute = { section: Section; provinceSlug?: string; year?: string; indicator?: string }
 function readRoute(): AppRoute {
@@ -388,38 +388,17 @@ function PredictionChart({ data, year, forecasts }: { data: NonNullable<Predicti
   const minYear = Math.min(...points.map((point) => point.year)), maxYear = Math.max(...points.map((point) => point.year))
   const minRate = Math.min(...points.map((point) => point.rate)), maxRate = Math.max(...points.map((point) => point.rate))
   const spread = Math.max(1, maxRate - minRate)
-  const x = (value: number) => 44 + (value - minYear) / Math.max(1, maxYear - minYear) * 648
+  const x = (value: number) => 64 + (value - minYear) / Math.max(1, maxYear - minYear) * 628
   const y = (value: number) => 220 - (value - (minRate - spread * .15)) / (spread * 1.3) * 180
+  const yTicks = Array.from({ length: 5 }, (_, index) => minRate - spread * .15 + (spread * 1.3) * index / 4).reverse()
   const line = points.map((point) => `${x(point.year)},${y(point.rate)}`).join(' ')
-  return <div className="prediction-chart-wrap"><svg className="prediction-chart" viewBox="0 0 720 270" role="img" aria-label={`Histórico y predicción de la tasa de no promoción para ${year}`}>
-    <line x1="44" y1="220" x2="692" y2="220" stroke="#d5e1e9" />
+  return <div className="prediction-chart-wrap"><svg className="prediction-chart" viewBox="0 0 720 290" role="img" aria-label={`Histórico y predicción de la tasa de no promoción para ${year}`}>
+    <text x="12" y="130" textAnchor="middle" className="prediction-axis-title" transform="rotate(-90 12 130)">Tasa de no promoción (%)</text>
+    {yTicks.map((tick) => <g key={tick}><line x1="64" y1={y(tick)} x2="692" y2={y(tick)} stroke="#e5edf2" /><text x="58" y={y(tick) + 4} textAnchor="end" className="prediction-axis-label">{new Intl.NumberFormat('es-AR', { maximumFractionDigits: 1 }).format(tick)}%</text></g>)}
+    <line x1="64" y1="220" x2="692" y2="220" stroke="#d5e1e9" />
     <polyline points={line} fill="none" stroke="#1d5f91" strokeWidth="3" strokeLinejoin="round" />
     {points.map((point) => <g key={point.year}><circle cx={x(point.year)} cy={y(point.rate)} r={point.year === year ? 6 : 4.5} fill={point.forecast ? '#c28d00' : point.imputed ? '#fff' : '#1d5f91'} stroke={point.imputed ? '#c28d00' : point.forecast ? '#c28d00' : '#fff'} strokeWidth="2"><title>{point.year}: {formatPercent(point.rate)}{point.imputed ? ' (imputado)' : point.forecast ? ' (predicción)' : ''}</title></circle><text x={x(point.year)} y="245" textAnchor="middle" className="prediction-axis-label">{point.year}</text></g>)}
   </svg><div className="prediction-legend"><span><i /> Histórico</span><span><i className="imputed" /> Año imputado</span><span><i className="forecast" /> Predicción</span></div></div>
-}
-
-function AboutPage() {
-  return <section className="about-page">
-    <div className="eyebrow"><span className="eyebrow-dot" /> INFORMACIÓN DEL SISTEMA</div>
-    <h1>Acerca de <span>la plataforma</span></h1>
-    <p className="about-lead">Una herramienta para organizar y explorar información sobre trayectorias educativas en Argentina.</p>
-
-    <article className="about-source">
-      <div className="about-source-icon">↗</div>
-      <div><span className="section-kicker">ORIGEN DE LOS DATOS</span><h2>Relevamiento Anual de Educación</h2>
-        <p>El proyecto trabaja con bases usuarias por escuela del Relevamiento Anual (RA), producido por la Secretaría de Educación de la Nación. El RA es un relevamiento censal anual del sistema educativo, su base de trayectoria incluye alumnos promovidos, no promovidos y salidos, con desgloses por establecimiento, jurisdicción, sector, ámbito, oferta y sexo. Los archivos se incorporan manualmente: la plataforma no los descarga de Nación.</p>
-        <div className="source-links"><a href="https://www.argentina.gob.ar/capital-humano/estadisticas-educativas" target="_blank" rel="noreferrer">Estadísticas educativas nacionales ↗</a><a href="https://www.argentina.gob.ar/sites/default/files/diccionario_de_datos.pdf" target="_blank" rel="noreferrer">Diccionario de las bases usuarias ↗</a></div>
-      </div>
-    </article>
-
-    <div className="about-section-heading"><span className="section-kicker">QUÉ SE ANALIZA</span><h2>Dimensiones de la trayectoria</h2><p>El procesador convierte las columnas reconocidas en observaciones para facilitar su consulta y comparación.</p></div>
-    <div className="about-grid">
-      <article className="about-card"><span className="about-number">01</span><h3>Territorio</h3><p>Los datos están referenciados por provincia y departamento. Cuando están presentes, también se guardan sector (privado/público) y ámbito (urbano/rural).</p><div className="tag-row"><span>Provincia</span><span>Departamento</span><span>Sector</span><span>Ámbito</span></div></article>
-      <article className="about-card"><span className="about-number">02</span><h3>Indicadores educativos</h3><p>Se reconocen columnas vinculadas con promoción, no promoción, regularidad, entradas, sobreedad, nivel inicial y egresos.</p><div className="tag-row"><span>Promoción</span><span>Regularidad</span><span>Egresos</span></div></article>
-      <article className="about-card"><span className="about-number">03</span><h3>Año de estudio</h3><p>Se separan los datos por año cursado, teniendo en cuenta primaria y secundaria.</p><div className="tag-row"><span>Año cursado</span><span>Grupo de años</span><span>Categorías especiales</span></div></article>
-      <article className="about-card"><span className="about-number">04</span><h3>Sexo</h3><p>Para cada medición, se especifica el total de todos los sexos, y el total de mujeres, permitiendo distinguir por género.</p><div className="tag-row"><span>Total</span><span>Mujeres</span></div></article>
-    </div>
-  </section>
 }
 
 export default function App() {
@@ -650,9 +629,6 @@ export default function App() {
   const selectedMetric = MAP_METRICS.find((item) => item.id === mapMetric) ?? MAP_METRICS[0]
   const territoryMetrics = selectedProvince ? departmentMetrics : provinceMetrics
   const selectedFile = years.find((item) => String(item.year) === selectedYear)?.file_name
-  const predictionYears = years.length
-    ? [...new Set([...years.map((item) => item.year), Math.max(...years.map((item) => item.year)) + 1, Math.max(...years.map((item) => item.year)) + 2])].sort((a, b) => a - b)
-    : []
   return (
     <div className="app-layout">
       <aside className="sidebar">
@@ -677,9 +653,6 @@ export default function App() {
           </button>
           <button className={section === 'upload' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('upload')}>
             <span className="nav-icon">↑</span> Subir archivo
-          </button>
-          <button className={section === 'about' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('about')}>
-            <span className="nav-icon">ⓘ</span> Acerca de
           </button>
         </nav>
         <div className="sidebar-bottom"><span className="status-dot" /> SISTEMA DE DATOS EDUCATIVOS</div>
@@ -713,7 +686,7 @@ export default function App() {
             <p className="privacy-note"><span aria-hidden="true">⌑</span> Los datos se procesan y almacenan en la base del sistema.</p>
           </form>
           <footer className="page-footer"><span>PLATAFORMA DE SOPORTE A DECISIONES</span><span>EDUCACIÓN · ARGENTINA</span></footer>
-        </section> : section === 'about' ? <AboutPage /> : section === 'equality' ? <section className="dashboard">
+        </section> : section === 'equality' ? <section className="dashboard">
           <div className="dashboard-title-row equality-title-row">
             <div><h1>Igualdad</h1><p className="intro">Compará las tasas de promoción según sexo y ámbito.</p></div>
             <div className="equality-filters">
@@ -744,7 +717,7 @@ export default function App() {
           </div>
           {!years.length && !statsError ? <div className="empty-panel"><span className="empty-icon">✦</span><h2>Todavía no hay datos cargados</h2><p>Subí al menos diez años consecutivos de trayectorias para generar una predicción.</p><button className="secondary-button" onClick={() => navigate('upload')}>Ir a subir archivo →</button></div> : <>
             <div className="prediction-filters">
-              <label className="dashboard-year"><span>AÑO A PREDECIR</span><select value={predictionYear} onChange={(event) => setPredictionYear(event.target.value)}>{predictionYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
+              <label className="dashboard-year"><span>AÑO A PREDECIR</span><input type="number" min="1900" max="2100" step="1" value={predictionYear} onChange={(event) => setPredictionYear(event.target.value)} aria-label="Año a predecir" /></label>
               <label className="dashboard-year"><span>PROVINCIA</span><select value={predictionProvince} onChange={(event) => setPredictionProvince(event.target.value)}><option>Nación</option>{PROVINCE_NAMES.map((province) => <option key={province}>{province}</option>)}</select></label>
             </div>
             {predictionError && <div className="notice error" role="alert">{predictionError}</div>}
