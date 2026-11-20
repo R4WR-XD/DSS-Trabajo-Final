@@ -9,8 +9,8 @@ type ImportResult = {
 }
 type AvailableYear = { year: number; import_id: number; file_name: string }
 type MapMetric = 'enrollment_rate' | 'promotion_rate' | 'not_promotion_rate' | 'abandonment_rate'
-type ProvinceMetric = {
-  province: string
+type TerritoryMetric = {
+  name: string
   enrolled: number | null
   school_age_population: number | null
   enrollment_rate: number | null
@@ -21,13 +21,14 @@ type ProvinceMetric = {
   not_promotion_rate: number | null
   abandonment_rate: number | null
 }
+type ProvinceMetric = TerritoryMetric
 type GeoPosition = [number, number, ...number[]]
-type ProvinceFeature = {
+type TerritoryFeature = {
   type: 'Feature'
-  properties: { nombre: string; [key: string]: unknown }
+  properties: { nombre: string; provincia?: { nombre?: string } | string; [key: string]: unknown }
   geometry: { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown }
 }
-type ProvinceFeatureCollection = { type: 'FeatureCollection'; features: ProvinceFeature[] }
+type TerritoryFeatureCollection = { type: 'FeatureCollection'; features: TerritoryFeature[] }
 type EqualityPoint = { label: string; rate: number | null }
 type EqualityStatistics = {
   provinces: string[]
@@ -40,9 +41,22 @@ type Section = 'summary' | 'equality' | 'predictive' | 'reports' | 'upload' | 'a
 const SECTION_PATHS: Record<Section, string> = {
   summary: '/trayectorias', equality: '/igualdad', predictive: '/predictivo', reports: '/reportes', upload: '/subir-archivo', about: '/acerca-de',
 }
-function sectionFromPath(path: string): Section {
-  return (Object.entries(SECTION_PATHS).find(([, route]) => route === path)?.[0] as Section | undefined) ?? 'summary'
+type AppRoute = { section: Section; provinceSlug?: string; year?: string; indicator?: string }
+function readRoute(): AppRoute {
+  const [path, query = ''] = window.location.hash.replace(/^#/, '').split('?')
+  const segments = path.split('/').filter(Boolean)
+  const sectionPath = `/${segments[0] ?? 'trayectorias'}`
+  const section = (Object.entries(SECTION_PATHS).find(([, route]) => route === sectionPath)?.[0] as Section | undefined) ?? 'summary'
+  const params = new URLSearchParams(query)
+  return { section, provinceSlug: section === 'summary' ? segments[1] : undefined, year: params.get('year') ?? undefined, indicator: params.get('indicator') ?? undefined }
 }
+
+const PROVINCE_NAMES = [
+  'Buenos Aires', 'Catamarca', 'Chaco', 'Chubut', 'Ciudad Autónoma de Buenos Aires', 'Córdoba', 'Corrientes',
+  'Entre Ríos', 'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones', 'Neuquén', 'Río Negro',
+  'Salta', 'San Juan', 'San Luis', 'Santa Cruz', 'Santa Fe', 'Santiago del Estero',
+  'Tierra del Fuego, Antártida e Islas del Atlántico Sur', 'Tucumán',
+]
 
 function NavIcon({ kind }: { kind: 'document' | 'scale' | 'sparkle' | 'chart' }) {
   return <svg className="nav-icon-svg" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -67,6 +81,29 @@ function provinceKey(name: string) {
   if (['caba', 'capital federal', 'ciudad de buenos aires', 'ciudad autonoma buenos aires', 'ciudad autonoma de buenos aires'].includes(key)) return 'ciudad autonoma de buenos aires'
   if (key.startsWith('tierra del fuego')) return 'tierra del fuego'
   return key
+}
+
+function provinceSlug(name: string) {
+  return provinceKey(name).replace(/\s+/g, '-')
+}
+
+function provinceForSlug(slug?: string) {
+  return PROVINCE_NAMES.find((name) => provinceSlug(name) === slug) ?? null
+}
+
+function departmentKey(name: string) {
+  const key = name.toLocaleLowerCase('es').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+  const aliases: Record<string, string> = {
+    ...Object.fromEntries(Array.from({ length: 15 }, (_, index) => [String(index + 1), `comuna ${index + 1}`])),
+    'angel vicente penaloza': 'general angel v penaloza',
+    'coronel felipe varela': 'general felipe varela',
+    'general juan f quiroga': 'general juan facundo quiroga',
+    'general ocampo': 'general ortiz de ocampo',
+    'la capital': 'juan martin de pueyrredon',
+    'juan f ibarra': 'juan felipe ibarra',
+    'juan b alberdi': 'juan bautista alberdi',
+  }
+  return aliases[key] ?? key
 }
 
 function allPositions(value: unknown): GeoPosition[] {
@@ -110,22 +147,46 @@ function interpolateBlue(amount: number) {
   return `rgb(${light.map((channel, index) => Math.round(channel + (dark[index] - channel) * t)).join(',')})`
 }
 
-function ProvinceMap({ data, metric }: { data: ProvinceMetric[]; metric: MapMetric }) {
-  const [collection, setCollection] = useState<ProvinceFeatureCollection | null>(null)
+function TerritoryMap({
+  data,
+  metric,
+  level,
+  province,
+  onProvinceSelect,
+}: {
+  data: TerritoryMetric[]
+  metric: MapMetric
+  level: 'province' | 'department'
+  province?: string
+  onProvinceSelect?: (province: string) => void
+}) {
+  const [collection, setCollection] = useState<TerritoryFeatureCollection | null>(null)
   const [mapError, setMapError] = useState(false)
   useEffect(() => {
-    const url = new URL('./data/provincias.geojson', import.meta.url)
+    const url = new URL(level === 'province' ? './data/provincias.geojson' : './data/departamentos.geojson', import.meta.url)
     fetch(url).then((response) => {
       if (!response.ok) throw new Error('No se pudo cargar el mapa.')
-      return response.json() as Promise<ProvinceFeatureCollection>
-    }).then(setCollection).catch(() => setMapError(true))
-  }, [])
+      return response.json() as Promise<TerritoryFeatureCollection>
+    }).then((result) => { setCollection(result); setMapError(false) }).catch(() => setMapError(true))
+  }, [level])
 
   const projectedFeatures = useMemo(() => {
     if (!collection) return []
-    const features = collection.features.map((feature) => {
+    const matchingFeatures = collection.features.filter((feature) => {
+      if (level === 'province') return true
+      const featureProvince = typeof feature.properties.provincia === 'string'
+        ? feature.properties.provincia
+        : feature.properties.provincia?.nombre ?? ''
+      if (provinceKey(featureProvince) !== provinceKey(province ?? '')) return false
+      if (provinceKey(province ?? '') === 'tierra del fuego') {
+        const departmentName = departmentKey(feature.properties.nombre)
+        if (departmentName === 'antartida argentina' || departmentName === 'islas del atlantico sur') return false
+      }
+      return true
+    })
+    const features = matchingFeatures.map((feature) => {
       let coordinates = feature.geometry.coordinates
-      if (feature.properties.nombre.startsWith('Tierra del Fuego') && Array.isArray(coordinates)) {
+      if (level === 'province' && feature.properties.nombre.startsWith('Tierra del Fuego') && Array.isArray(coordinates)) {
         // The IGN multipolygon also includes Antarctica and many small islands.
         // Keep only Isla Grande de Tierra del Fuego and the principal Malvinas islands.
         coordinates = coordinates.filter(isMainSouthernIsland)
@@ -151,24 +212,35 @@ function ProvinceMap({ data, metric }: { data: ProvinceMetric[]; metric: MapMetr
       name: feature.properties.nombre,
       path: geometryPath(coordinates, project),
     }))
-  }, [collection])
+  }, [collection, level, province])
 
-  const metricByProvince = new Map(data.map((item) => [provinceKey(item.province), item]))
+  const keyForName = level === 'province' ? provinceKey : departmentKey
+  const metricByTerritory = new Map(data.map((item) => [keyForName(item.name), item]))
   // Ignore fields missing from an older API container as well as null/invalid rates.
   const values = data.map((item) => item[metric]).filter(
     (value): value is number => typeof value === 'number' && Number.isFinite(value),
-  )
+  ).map((value) => metric === 'enrollment_rate' ? Math.min(value, 100) : value)
   const minimum = Math.min(...values), maximum = Math.max(...values)
   if (mapError) return <div className="map-empty">No se pudo cargar el mapa de provincias.</div>
-  if (!projectedFeatures.length) return <div className="map-empty"><span className="spinner dark" /> Preparando mapa…</div>
+  if (!projectedFeatures.length) return <div className="map-empty">No hay geometrías territoriales para mostrar.</div>
 
   return <div className="province-map-wrap">
-    <svg className="province-map" viewBox="0 0 420 610" role="img" aria-label="Mapa de Argentina por provincia">
+    <svg className="province-map" viewBox="0 0 420 610" role="img" aria-label={level === 'province' ? 'Mapa de Argentina por provincia' : `Mapa departamental de ${province}`}>
       {projectedFeatures.map((feature) => {
-        const point = metricByProvince.get(provinceKey(feature.name))
-        const value = point?.[metric] ?? null
+        const point = metricByTerritory.get(keyForName(feature.name))
+        const rawValue = point?.[metric] ?? null
+        const value = rawValue !== null && metric === 'enrollment_rate' ? Math.min(rawValue, 100) : rawValue
         const fill = value === null ? '#e6edf2' : interpolateBlue(maximum === minimum ? .55 : (value - minimum) / (maximum - minimum))
-        return <path key={feature.name} d={feature.path} fill={fill} className="province-shape">
+        return <path
+          key={feature.name}
+          d={feature.path}
+          fill={fill}
+          className={onProvinceSelect ? 'province-shape province-shape-clickable' : 'province-shape'}
+          onClick={onProvinceSelect ? () => onProvinceSelect(feature.name) : undefined}
+          onKeyDown={onProvinceSelect ? (event) => { if (event.key === 'Enter' || event.key === ' ') onProvinceSelect(feature.name) } : undefined}
+          role={onProvinceSelect ? 'button' : undefined}
+          tabIndex={onProvinceSelect ? 0 : undefined}
+        >
           <title>{feature.name}: {value === null ? 'sin datos' : formatPercent(value)}</title>
         </path>
       })}
@@ -178,29 +250,25 @@ function ProvinceMap({ data, metric }: { data: ProvinceMetric[]; metric: MapMetr
   </div>
 }
 
-function ProvinceDetailList({ data, metric }: { data: ProvinceMetric[]; metric: MapMetric }) {
-  const geoNames: string[] = [
-    'Buenos Aires', 'Catamarca', 'Chaco', 'Chubut', 'Ciudad Autónoma de Buenos Aires', 'Córdoba', 'Corrientes',
-    'Entre Ríos', 'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones', 'Neuquén', 'Río Negro',
-    'Salta', 'San Juan', 'San Luis', 'Santa Cruz', 'Santa Fe', 'Santiago del Estero',
-    'Tierra del Fuego, Antártida e Islas del Atlántico Sur', 'Tucumán',
-  ]
-  const lookup = new Map(data.map((item) => [provinceKey(item.province), item]))
-  const rows = geoNames.map((name) => ({ name, item: lookup.get(provinceKey(name)) ?? null }))
+function TerritoryDetailList({ data, metric, level }: { data: TerritoryMetric[]; metric: MapMetric; level: 'province' | 'department' }) {
+  const names = level === 'province' ? PROVINCE_NAMES : data.map((item) => item.name)
+  const keyForName = level === 'province' ? provinceKey : departmentKey
+  const lookup = new Map(data.map((item) => [keyForName(item.name), item]))
+  const rows = names.map((name) => ({ name, item: lookup.get(keyForName(name)) ?? null }))
     .sort((a, b) => (b.item?.[metric] ?? -1) - (a.item?.[metric] ?? -1) || a.name.localeCompare(b.name, 'es'))
 
   function headline(item: ProvinceMetric | null) {
     if (!item) return 'Sin datos'
     const value = item[metric]
     if (typeof value !== 'number' || !Number.isFinite(value)) return 'Sin base para calcular'
-    return formatPercent(value)
+    return formatPercent(metric === 'enrollment_rate' ? Math.min(value, 100) : value)
   }
   function detail(item: ProvinceMetric | null) {
     if (!item) return 'No hay observaciones para esta provincia.'
     if (metric === 'enrollment_rate') {
       if (typeof item.enrolled !== 'number' || !Number.isFinite(item.enrolled)) return 'Sin dato de matrícula inicial'
       if (typeof item.school_age_population !== 'number' || !Number.isFinite(item.school_age_population) || item.school_age_population === 0) return `Matrícula inicial ${formatNumber(item.enrolled)} · sin población en edad escolar de referencia`
-      return `${formatNumber(item.enrolled)} matriculados · población 4–17 años ${formatNumber(item.school_age_population)}`
+      return `${formatNumber(item.enrolled)} matriculados · población estimada de 4–17 años ${formatNumber(item.school_age_population)}`
     }
     if (metric === 'promotion_rate') return `${formatNumber(item.promoted ?? 0)} promovidos · base ${formatNumber((item.promoted ?? 0) + (item.not_promoted ?? 0))}`
     if (metric === 'not_promotion_rate') return `${formatNumber(item.not_promoted ?? 0)} no promovidos · base ${formatNumber((item.promoted ?? 0) + (item.not_promoted ?? 0))}`
@@ -254,13 +322,22 @@ function AboutPage() {
 }
 
 export default function App() {
-  const [section, setSection] = useState<Section>(() => sectionFromPath(window.location.hash.replace(/^#/, '')))
+  const [route, setRoute] = useState<AppRoute>(readRoute)
+  const [section, setSection] = useState<Section>(route.section)
   function navigate(next: Section) {
     setSection(next)
     if (window.location.hash !== `#${SECTION_PATHS[next]}`) window.location.hash = SECTION_PATHS[next]
   }
   useEffect(() => {
-    const syncRoute = () => setSection(sectionFromPath(window.location.hash.replace(/^#/, '')))
+    const syncRoute = () => {
+      const nextRoute = readRoute()
+      setRoute(nextRoute)
+      setSection(nextRoute.section)
+      if (nextRoute.year) setSelectedYear(nextRoute.year)
+      if (nextRoute.indicator && MAP_METRICS.some((item) => item.id === nextRoute.indicator)) {
+        setMapMetric(nextRoute.indicator as MapMetric)
+      }
+    }
     window.addEventListener('hashchange', syncRoute)
     return () => window.removeEventListener('hashchange', syncRoute)
   }, [])
@@ -270,19 +347,37 @@ export default function App() {
   const [uploadError, setUploadError] = useState('')
   const [result, setResult] = useState<ImportResult | null>(null)
   const [years, setYears] = useState<AvailableYear[]>([])
-  const [selectedYear, setSelectedYear] = useState('')
+  const [selectedYear, setSelectedYear] = useState(route.year ?? '')
   const [equalityYear, setEqualityYear] = useState('')
   const [equalityProvince, setEqualityProvince] = useState('Nación')
   const [equalityDepartment, setEqualityDepartment] = useState('')
   const [equalityStats, setEqualityStats] = useState<EqualityStatistics | null>(null)
   const [equalityLoading, setEqualityLoading] = useState(false)
   const [equalityError, setEqualityError] = useState('')
-  const [mapMetric, setMapMetric] = useState<MapMetric>('enrollment_rate')
+  const [mapMetric, setMapMetric] = useState<MapMetric>(() =>
+    MAP_METRICS.some((item) => item.id === route.indicator) ? route.indicator as MapMetric : 'enrollment_rate',
+  )
   const [provinceMetrics, setProvinceMetrics] = useState<ProvinceMetric[]>([])
+  const [departmentMetrics, setDepartmentMetrics] = useState<TerritoryMetric[]>([])
   const [mapRefreshKey, setMapRefreshKey] = useState(0)
   const [statsError, setStatsError] = useState('')
   const [loadingStats, setLoadingStats] = useState(true)
   const inputRef = useRef<HTMLInputElement>(null)
+  const selectedProvince = provinceForSlug(route.provinceSlug)
+
+  function navigateProvince(province: string) {
+    const params = new URLSearchParams({ year: selectedYear, indicator: mapMetric })
+    window.location.hash = `${SECTION_PATHS.summary}/${provinceSlug(province)}?${params.toString()}`
+  }
+
+  useEffect(() => {
+    if (section !== 'summary' || !route.provinceSlug) return
+    const params = new URLSearchParams()
+    if (selectedYear) params.set('year', selectedYear)
+    params.set('indicator', mapMetric)
+    const nextHash = `#${SECTION_PATHS.summary}/${route.provinceSlug}?${params.toString()}`
+    if (window.location.hash !== nextHash) window.location.hash = nextHash
+  }, [section, route.provinceSlug, selectedYear, mapMetric])
 
   async function refreshYears(preferredYear?: number) {
     try {
@@ -301,6 +396,7 @@ export default function App() {
         setSelectedYear('')
         setEqualityYear('')
         setProvinceMetrics([])
+        setDepartmentMetrics([])
       }
       setStatsError('')
     } catch (reason) {
@@ -318,10 +414,17 @@ export default function App() {
       setStatsError('')
       try {
         const params = new URLSearchParams({ year: selectedYear })
-        const response = await fetch(`/api/statistics/province-map?${params}`, { signal: controller.signal })
+        if (selectedProvince) params.set('province', selectedProvince)
+        const endpoint = selectedProvince ? 'department-map' : 'province-map'
+        const response = await fetch(`/api/statistics/${endpoint}?${params}`, { signal: controller.signal })
         const data = await response.json()
-        if (!response.ok) throw new Error(data.detail ?? 'No se pudieron cargar las estadísticas por provincia.')
-        setProvinceMetrics(data.provinces as ProvinceMetric[])
+        if (!response.ok) throw new Error(data.detail ?? 'No se pudieron cargar las estadísticas territoriales.')
+        if (selectedProvince) {
+          setDepartmentMetrics(data.departments as TerritoryMetric[])
+        } else {
+          setProvinceMetrics((data.provinces as Array<Omit<ProvinceMetric, 'name'> & { province: string }>)
+            .map((item) => ({ ...item, name: item.province })))
+        }
       } catch (reason) {
         if (reason instanceof Error && reason.name === 'AbortError') return
         setStatsError(reason instanceof Error ? reason.message : 'Error de conexión con el servidor.')
@@ -331,7 +434,7 @@ export default function App() {
     }
     void load()
     return () => controller.abort()
-  }, [selectedYear, mapRefreshKey])
+  }, [selectedYear, selectedProvince, mapRefreshKey])
 
   useEffect(() => {
     if (!equalityYear) return
@@ -385,6 +488,7 @@ export default function App() {
   }
 
   const selectedMetric = MAP_METRICS.find((item) => item.id === mapMetric) ?? MAP_METRICS[0]
+  const territoryMetrics = selectedProvince ? departmentMetrics : provinceMetrics
   const selectedFile = years.find((item) => String(item.year) === selectedYear)?.file_name
   return (
     <div className="app-layout">
@@ -422,9 +526,7 @@ export default function App() {
         <header className="topbar"><span className="topbar-label">Radar Educativo</span><span className="country-tag">ARGENTINA <span>●</span></span></header>
 
         {section === 'upload' ? <section className="content upload-content" id="inicio">
-          <div className="eyebrow"><span className="eyebrow-dot" /> DATOS EDUCATIVOS · ARGENTINA</div>
-          <h1>Importar trayectoria<br /><span>educativa</span></h1>
-          <p className="intro">Cargá un dataset anual para procesar y guardar sus observaciones en la base del sistema.</p>
+          <h1>Importar trayectoria educativa</h1>
 
           <form className="upload-card" onSubmit={submit}>
             <div className="card-heading"><div><h2>Nueva importación</h2><p>Completá el año y seleccioná el archivo de origen.</p></div><div className="step-number">01 <span>/ 01</span></div></div>
@@ -450,7 +552,7 @@ export default function App() {
           <footer className="page-footer"><span>PLATAFORMA DE SOPORTE A DECISIONES</span><span>EDUCACIÓN · ARGENTINA</span></footer>
         </section> : section === 'about' ? <AboutPage /> : section === 'equality' ? <section className="dashboard">
           <div className="dashboard-title-row equality-title-row">
-            <div><div className="eyebrow"><span className="eyebrow-dot" /> PANEL DE ANÁLISIS</div><h1>Igualdad</h1><p className="intro">Compará las tasas de promoción según sexo y ámbito.</p></div>
+            <div><h1>Igualdad</h1><p className="intro">Compará las tasas de promoción según sexo y ámbito.</p></div>
             <div className="equality-filters">
               <label className="dashboard-year"><span>AÑO DEL DATASET</span><select value={equalityYear} onChange={(event) => { setEqualityYear(event.target.value); setEqualityDepartment('') }} disabled={!years.length}>
                 {years.map((item) => <option key={item.year} value={item.year}>{item.year}</option>)}
@@ -474,7 +576,6 @@ export default function App() {
           <p className="data-note">Tasa de promoción = promovidos / (promovidos + no promovidos). El valor de hombres se calcula restando mujeres al total, según las columnas disponibles en los datos.</p>
         </section> : section === 'predictive' || section === 'reports' ? <section className="dashboard">
           <div className="dashboard-placeholder">
-            <div className="eyebrow"><span className="eyebrow-dot" /> PANEL DE ANÁLISIS</div>
             <h1>{section === 'predictive' ? 'Predictivo' : 'Reportes'}</h1>
             <p className="intro">{section === 'predictive'
               ? 'Seleccioná Nación o una provincia para consultar la predicción de la tasa de no promoción.'
@@ -483,29 +584,38 @@ export default function App() {
           </div>
         </section> : <section className="dashboard">
           <div className="dashboard-title-row">
-            <div><div className="eyebrow"><span className="eyebrow-dot" /> PANEL DE ANÁLISIS</div><h1>Trayectorias</h1><p className="intro">Explorá los principales datos de trayectoria educativa.</p></div>
-            <label className="dashboard-year"><span>AÑO DEL DATASET</span><select value={selectedYear} onChange={(event) => setSelectedYear(event.target.value)} disabled={!years.length}>
-              {years.length ? years.map((item) => <option key={item.year} value={item.year}>{item.year}</option>) : <option value="">Sin datos</option>}
-            </select></label>
+            <div>{selectedProvince && <button type="button" className="map-back-button" onClick={() => navigate('summary')}>← Todas las provincias</button>}
+              <h1>{selectedProvince ?? 'Trayectorias'}</h1>
+            </div>
           </div>
 
           {statsError && <div className="notice error" role="alert">{statsError}</div>}
+          {years.length > 0 && <div className="metric-controls-row">
+            <div className="metric-switcher" role="group" aria-label="Elegir indicador">
+              {MAP_METRICS.map((item) => <button type="button" key={item.id} className={mapMetric === item.id ? 'metric-option active' : 'metric-option'} aria-pressed={mapMetric === item.id} onClick={() => setMapMetric(item.id)}>{item.label}</button>)}
+            </div>
+            <label className="dashboard-year"><span>AÑO DEL DATASET</span><select value={selectedYear} onChange={(event) => setSelectedYear(event.target.value)}>
+              {years.map((item) => <option key={item.year} value={item.year}>{item.year}</option>)}
+            </select></label>
+          </div>}
           {loadingStats && years.length > 0 ? <div className="loading-panel"><span className="spinner dark" /> Cargando estadísticas…</div>
             : !years.length && !statsError ? <div className="empty-panel"><span className="empty-icon">▤</span><h2>Todavía no hay datos cargados</h2><p>Subí un archivo de trayectoria para empezar a explorar las estadísticas.</p><button className="secondary-button" onClick={() => navigate('upload')}>Ir a subir archivo →</button></div>
               : years.length > 0 && <>
-                <div className="data-source"><span>Importación seleccionada</span><b>{selectedFile ?? `Año ${selectedYear}`}</b></div>
-                <div className="metric-switcher" role="group" aria-label="Elegir indicador">
-                  {MAP_METRICS.map((item) => <button type="button" key={item.id} className={mapMetric === item.id ? 'metric-option active' : 'metric-option'} aria-pressed={mapMetric === item.id} onClick={() => setMapMetric(item.id)}>{item.label}</button>)}
-                </div>
                 <div className="metric-heading"><div><h2>{selectedMetric.label}</h2><p>{selectedMetric.description}</p></div><span>TASA</span></div>
                 <div className="territory-layout">
                   <article className="map-panel">
-                    <div className="panel-heading"><div><h3>Por provincia</h3><p>Seleccioná un tono para comparar territorios</p></div><span className="panel-icon">⌖</span></div>
-                    <ProvinceMap data={provinceMetrics} metric={mapMetric} />
+                    <div className="panel-heading"><div><h3>{selectedProvince ? 'Por departamento' : 'Por provincia'}</h3><p>{selectedProvince ? 'Compará departamentos de la provincia' : 'Seleccioná una provincia para ver sus departamentos'}</p></div><span className="panel-icon">⌖</span></div>
+                    <TerritoryMap
+                      data={territoryMetrics}
+                      metric={mapMetric}
+                      level={selectedProvince ? 'department' : 'province'}
+                      province={selectedProvince ?? undefined}
+                      onProvinceSelect={selectedProvince ? undefined : navigateProvince}
+                    />
                   </article>
                   <article className="province-list-panel">
-                    <div className="panel-heading"><div><h3>Detalle por provincia</h3><p>Ordenado de mayor a menor</p></div><span className="panel-count">{provinceMetrics.length}/24</span></div>
-                    <ProvinceDetailList data={provinceMetrics} metric={mapMetric} />
+                    <div className="panel-heading"><div><h3>{selectedProvince ? 'Detalle por departamento' : 'Detalle por provincia'}</h3><p>Ordenado de mayor a menor</p></div><span className="panel-count">{selectedProvince ? departmentMetrics.length : `${provinceMetrics.length}/24`}</span></div>
+                    <TerritoryDetailList data={territoryMetrics} metric={mapMetric} level={selectedProvince ? 'department' : 'province'} />
                   </article>
                 </div>
                 <p className="methodology-note"><strong>Cómo se calcula:</strong> matrícula relativa = matrícula inicial / población estimada de 4 a 17 años. La población en edad escolar se estima aplicando a la población departamental anual el porcentaje de 4 a 17 años del Censo 2022, que se mantiene constante para todos los años. Promoción = promovidos / (promovidos + no promovidos); no promoción usa la misma base. Para abandono se usa “salidos sin pase” / matrícula inicial como referencia exploratoria: no equivale a la tasa oficial de abandono interanual. Los numeradores provienen de valores absolutos del archivo.</p>

@@ -199,6 +199,94 @@ def province_map_statistics(year: int, db: Session = Depends(get_db)):
     return {"year": year, "import_id": batch.id, "provinces": result}
 
 
+@app.get("/api/statistics/department-map")
+def department_map_statistics(year: int, province: str, db: Session = Depends(get_db)):
+    """Conteos y tasas exploratorias agregados por departamento/partido/comuna."""
+    batch = (
+        db.query(ImportBatch)
+        .filter(ImportBatch.year == year)
+        .order_by(ImportBatch.id.desc())
+        .first()
+    )
+    if batch is None:
+        raise HTTPException(404, "No hay datos cargados para ese año.")
+
+    selected_key = province_key(province)
+    rows = (
+        db.query(
+            Observation.provincia,
+            Observation.departamento,
+            Observation.indicator,
+            func.sum(Observation.value),
+        )
+        .filter(Observation.import_id == batch.id, Observation.sex == "total")
+        .group_by(Observation.provincia, Observation.departamento, Observation.indicator)
+        .all()
+    )
+    values: dict[str, dict[str, float]] = {}
+    department_names: dict[str, str] = {}
+    for observed_province, department, indicator, value in rows:
+        if province_key(observed_province) != selected_key:
+            continue
+        key = department_key(department)
+        if selected_key == "tierra del fuego" and key in {"antartida argentina", "islas del atlantico sur"}:
+            continue
+        department_names.setdefault(key, department)
+        bucket = values.setdefault(key, {})
+        bucket[indicator] = bucket.get(indicator, 0) + float(value or 0)
+
+    age_shares = {
+        department_key(department): percentage / 100
+        for row_province, department, percentage in db.query(
+            SchoolAgePercentage.provincia,
+            SchoolAgePercentage.departamento,
+            SchoolAgePercentage.porcentaje_edad_escolar,
+        ).filter(SchoolAgePercentage.sexo == "Ambos sexos").all()
+        if province_key(row_province) == selected_key
+    }
+    population_rows = (
+        db.query(
+            PopulationEstimate.provincia,
+            PopulationEstimate.departamento,
+            PopulationEstimate.poblacion,
+        )
+        .filter(PopulationEstimate.year == year, PopulationEstimate.sexo == "Ambos sexos")
+        .all()
+    )
+    school_age_population: dict[str, float] = {}
+    for row_province, department, population in population_rows:
+        if province_key(row_province) != selected_key:
+            continue
+        key = department_key(department)
+        share = age_shares.get(key)
+        if share is not None:
+            school_age_population[key] = school_age_population.get(key, 0) + int(population or 0) * share
+
+    departments = []
+    for key, totals in values.items():
+        enrolled = totals.get("inicial")
+        denominator = school_age_population.get(key)
+        promoted = totals.get("promovidos")
+        not_promoted = totals.get("nopromo")
+        promotion_base = (promoted or 0) + (not_promoted or 0)
+        exits_without_transfer = totals.get("ssp")
+        departments.append(
+            {
+                "name": department_names[key],
+                "enrolled": enrolled,
+                "school_age_population": denominator,
+                "enrollment_rate": enrolled / denominator * 100 if enrolled is not None and denominator else None,
+                "promoted": promoted,
+                "not_promoted": not_promoted,
+                "exits_without_transfer": exits_without_transfer,
+                "promotion_rate": promoted / promotion_base * 100 if promoted is not None and not_promoted is not None and promotion_base > 0 else None,
+                "not_promotion_rate": not_promoted / promotion_base * 100 if promoted is not None and not_promoted is not None and promotion_base > 0 else None,
+                "abandonment_rate": exits_without_transfer / enrolled * 100 if exits_without_transfer is not None and enrolled is not None and enrolled > 0 else None,
+            }
+        )
+    return {"year": year, "import_id": batch.id, "province": province, "departments": departments}
+
+
 @app.get("/api/statistics/equality")
 def equality_statistics(
     year: int,
