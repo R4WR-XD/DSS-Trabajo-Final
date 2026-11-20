@@ -8,6 +8,22 @@ type ImportResult = {
   message: string
 }
 type AvailableYear = { year: number; import_id: number; file_name: string }
+type PredictionResult = {
+  eligible: boolean
+  year: number
+  available_years: number[]
+  required_years: number
+  message?: string
+  province?: string
+  area?: string
+  sex?: string
+  history?: Array<{ year: number; rate: number; imputed: boolean }>
+  forecast?: number
+  forecast_series?: Array<{ year: number; rate: number }>
+  forecast_steps?: number
+  model?: string
+  imputed_year?: number | null
+}
 type MapMetric = 'enrollment_rate' | 'promotion_rate' | 'not_promotion_rate' | 'abandonment_rate'
 type TerritoryMetric = {
   name: string
@@ -30,6 +46,13 @@ type TerritoryFeature = {
 }
 type TerritoryFeatureCollection = { type: 'FeatureCollection'; features: TerritoryFeature[] }
 type EqualityPoint = { label: string; rate: number | null }
+type StudyYearPoint = {
+  study_year: number
+  label: string
+  level: 'Primaria' | 'Secundaria'
+  value: number | null
+  amount: number | null
+}
 type EqualityStatistics = {
   provinces: string[]
   departments: string[]
@@ -70,7 +93,7 @@ function NavIcon({ kind }: { kind: 'document' | 'scale' | 'sparkle' | 'chart' })
 const formatNumber = (value: number) => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 }).format(value)
 const formatPercent = (value: number) => `${new Intl.NumberFormat('es-AR', { maximumFractionDigits: 1, minimumFractionDigits: 1 }).format(value)}%`
 const MAP_METRICS: { id: MapMetric; label: string; description: string }[] = [
-  { id: 'enrollment_rate', label: 'Matrícula relativa', description: 'Matrícula inicial sobre población estimada de 4 a 17 años' },
+  { id: 'enrollment_rate', label: 'Matrícula', description: 'Matrícula inicial sobre población estimada de 4 a 17 años' },
   { id: 'promotion_rate', label: 'Promoción', description: 'Promovidos sobre promovidos + no promovidos' },
   { id: 'not_promotion_rate', label: 'No promoción', description: 'No promovidos sobre promovidos + no promovidos' },
   { id: 'abandonment_rate', label: 'Abandono', description: 'Salidos sin pase sobre matrícula inicial' },
@@ -283,6 +306,69 @@ function TerritoryDetailList({ data, metric, level }: { data: TerritoryMetric[];
   </div>
 }
 
+function StudyYearHistogram({
+  data,
+  metric,
+  territoryName,
+  loading,
+  error,
+}: {
+  data: StudyYearPoint[]
+  metric: MapMetric
+  territoryName: string
+  loading: boolean
+  error: string
+}) {
+  const values = data.map((point) => point.value).filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+  const maximumValue = values.length ? Math.max(...values) : 0
+  const axisMaximum = Math.max(10, Math.ceil(maximumValue / 10) * 10)
+  const plot = { left: 45, right: 14, top: 22, bottom: 222 }
+  const plotWidth = 680 - plot.left - plot.right
+  const plotHeight = plot.bottom - plot.top
+  const slotWidth = plotWidth / 12
+  const barWidth = Math.min(29, slotWidth * .64)
+  const title = metric === 'enrollment_rate' ? 'Distribución de matrícula por año de estudio' : `${MAP_METRICS.find((item) => item.id === metric)?.label ?? 'Indicador'} por año de estudio`
+  const subtitle = metric === 'enrollment_rate'
+    ? 'Participación de cada grado/año en la matrícula inicial total'
+    : `Tasa seleccionada para ${territoryName.toLocaleLowerCase('es')}`
+
+  return <article className="study-year-panel chart-card">
+    <div className="chart-heading"><div><h3>{title}</h3><p>{subtitle}</p></div></div>
+    {loading ? <div className="chart-empty"><span className="spinner dark" /> Calculando distribución…</div>
+      : error ? <div className="chart-empty">{error}</div>
+        : !values.length ? <div className="chart-empty">No hay valores para los años de estudio regulares.</div>
+          : <svg className="study-year-chart" viewBox="0 0 680 290" role="img" aria-label={title}>
+            {Array.from({ length: 5 }, (_, index) => {
+              const tick = axisMaximum * (4 - index) / 4
+              const y = plot.top + plotHeight * index / 4
+              return <g key={tick}>
+                <line x1={plot.left} x2={680 - plot.right} y1={y} y2={y} className="study-year-gridline" />
+                <text x={plot.left - 8} y={y + 4} textAnchor="end" className="study-year-axis-label">{Math.round(tick)}%</text>
+              </g>
+            })}
+            {data.map((point, index) => {
+              const value = point.value
+              const barHeight = value === null ? 0 : Math.max(0, value / axisMaximum * plotHeight)
+              const x = plot.left + slotWidth * index + (slotWidth - barWidth) / 2
+              const y = plot.bottom - barHeight
+              const shortLabel = point.study_year <= 6 ? `${point.study_year}°G` : `${point.study_year - 6}°A`
+              return <g key={point.study_year}>
+                {value !== null && <>
+                  <rect x={x} y={y} width={barWidth} height={barHeight} rx="3" className="study-year-bar">
+                    <title>{point.label}: {formatPercent(value)}</title>
+                  </rect>
+                  <text x={x + barWidth / 2} y={Math.max(plot.top + 11, y - 5)} textAnchor="middle" className="study-year-value">{formatPercent(value)}</text>
+                </>}
+                <text x={x + barWidth / 2} y={plot.bottom + 18} textAnchor="middle" className="study-year-axis-label">{shortLabel}</text>
+              </g>
+            })}
+            <line x1={plot.left + slotWidth * 6} x2={plot.left + slotWidth * 6} y1={plot.top} y2={plot.bottom + 26} className="study-year-separator" />
+            <text x={plot.left + slotWidth * 3} y="272" textAnchor="middle" className="study-year-group-label">Primaria · 1° a 6° grado</text>
+            <text x={plot.left + slotWidth * 9} y="272" textAnchor="middle" className="study-year-group-label">Secundaria · 1° a 6° año</text>
+          </svg>}
+  </article>
+}
+
 function EqualityBarCard({ title, subtitle, data, colors }: { title: string; subtitle: string; data: EqualityPoint[]; colors: string[] }) {
   return <article className="chart-card equality-chart-card">
     <div className="chart-heading"><div><h3>{title}</h3><p>{subtitle}</p></div></div>
@@ -295,6 +381,21 @@ function EqualityBarCard({ title, subtitle, data, colors }: { title: string; sub
     </div>
     <div className="equality-axis"><span>0%</span><span>50%</span><span>100%</span></div>
   </article>
+}
+
+function PredictionChart({ data, year, forecasts }: { data: NonNullable<PredictionResult['history']>; year: number; forecasts: NonNullable<PredictionResult['forecast_series']> }) {
+  const points = [...data.map((item) => ({ year: item.year, rate: item.rate, imputed: item.imputed, forecast: false })), ...forecasts.map((item) => ({ ...item, imputed: false, forecast: true }))]
+  const minYear = Math.min(...points.map((point) => point.year)), maxYear = Math.max(...points.map((point) => point.year))
+  const minRate = Math.min(...points.map((point) => point.rate)), maxRate = Math.max(...points.map((point) => point.rate))
+  const spread = Math.max(1, maxRate - minRate)
+  const x = (value: number) => 44 + (value - minYear) / Math.max(1, maxYear - minYear) * 648
+  const y = (value: number) => 220 - (value - (minRate - spread * .15)) / (spread * 1.3) * 180
+  const line = points.map((point) => `${x(point.year)},${y(point.rate)}`).join(' ')
+  return <div className="prediction-chart-wrap"><svg className="prediction-chart" viewBox="0 0 720 270" role="img" aria-label={`Histórico y predicción de la tasa de no promoción para ${year}`}>
+    <line x1="44" y1="220" x2="692" y2="220" stroke="#d5e1e9" />
+    <polyline points={line} fill="none" stroke="#1d5f91" strokeWidth="3" strokeLinejoin="round" />
+    {points.map((point) => <g key={point.year}><circle cx={x(point.year)} cy={y(point.rate)} r={point.year === year ? 6 : 4.5} fill={point.forecast ? '#c28d00' : point.imputed ? '#fff' : '#1d5f91'} stroke={point.imputed ? '#c28d00' : point.forecast ? '#c28d00' : '#fff'} strokeWidth="2"><title>{point.year}: {formatPercent(point.rate)}{point.imputed ? ' (imputado)' : point.forecast ? ' (predicción)' : ''}</title></circle><text x={x(point.year)} y="245" textAnchor="middle" className="prediction-axis-label">{point.year}</text></g>)}
+  </svg><div className="prediction-legend"><span><i /> Histórico</span><span><i className="imputed" /> Año imputado</span><span><i className="forecast" /> Predicción</span></div></div>
 }
 
 function AboutPage() {
@@ -347,6 +448,11 @@ export default function App() {
   const [uploadError, setUploadError] = useState('')
   const [result, setResult] = useState<ImportResult | null>(null)
   const [years, setYears] = useState<AvailableYear[]>([])
+  const [predictionYear, setPredictionYear] = useState('')
+  const [predictionProvince, setPredictionProvince] = useState('Nación')
+  const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null)
+  const [predictionLoading, setPredictionLoading] = useState(false)
+  const [predictionError, setPredictionError] = useState('')
   const [selectedYear, setSelectedYear] = useState(route.year ?? '')
   const [equalityYear, setEqualityYear] = useState('')
   const [equalityProvince, setEqualityProvince] = useState('Nación')
@@ -359,6 +465,9 @@ export default function App() {
   )
   const [provinceMetrics, setProvinceMetrics] = useState<ProvinceMetric[]>([])
   const [departmentMetrics, setDepartmentMetrics] = useState<TerritoryMetric[]>([])
+  const [studyYearPoints, setStudyYearPoints] = useState<StudyYearPoint[]>([])
+  const [studyYearLoading, setStudyYearLoading] = useState(false)
+  const [studyYearError, setStudyYearError] = useState('')
   const [mapRefreshKey, setMapRefreshKey] = useState(0)
   const [statsError, setStatsError] = useState('')
   const [loadingStats, setLoadingStats] = useState(true)
@@ -386,6 +495,7 @@ export default function App() {
       const available = await response.json() as AvailableYear[]
       setYears(available)
       if (available.length) {
+        setPredictionYear((current) => current || String(Math.max(...available.map((item) => item.year)) + 1))
         const nextYear = preferredYear && available.some((item) => item.year === preferredYear)
           ? String(preferredYear)
           : selectedYear && available.some((item) => String(item.year) === selectedYear)
@@ -405,6 +515,31 @@ export default function App() {
   }
 
   useEffect(() => { void refreshYears() }, [])
+
+  useEffect(() => {
+    if (section !== 'predictive' || !predictionYear) return
+    const controller = new AbortController()
+    async function loadPrediction() {
+      setPredictionLoading(true)
+      setPredictionError('')
+      const params = new URLSearchParams({ year: predictionYear })
+      if (predictionProvince !== 'Nación') params.set('province', predictionProvince)
+      try {
+        const response = await fetch(`/api/predictions?${params}`, { signal: controller.signal })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.detail ?? 'No se pudo calcular la predicción.')
+        setPredictionResult(data as PredictionResult)
+      } catch (reason) {
+        if (reason instanceof Error && reason.name === 'AbortError') return
+        setPredictionError(reason instanceof Error ? reason.message : 'Error de conexión con el servidor.')
+        setPredictionResult(null)
+      } finally {
+        if (!controller.signal.aborted) setPredictionLoading(false)
+      }
+    }
+    void loadPrediction()
+    return () => controller.abort()
+  }, [section, predictionYear, predictionProvince, mapRefreshKey])
 
   useEffect(() => {
     if (!selectedYear) { setLoadingStats(false); return }
@@ -435,6 +570,31 @@ export default function App() {
     void load()
     return () => controller.abort()
   }, [selectedYear, selectedProvince, mapRefreshKey])
+
+  useEffect(() => {
+    if (!selectedYear) { setStudyYearPoints([]); return }
+    const controller = new AbortController()
+    async function loadStudyYearDistribution() {
+      setStudyYearLoading(true)
+      setStudyYearError('')
+      try {
+        const params = new URLSearchParams({ year: selectedYear, indicator: mapMetric })
+        if (selectedProvince) params.set('province', selectedProvince)
+        const response = await fetch(`/api/statistics/study-year-distribution?${params}`, { signal: controller.signal })
+        const result = await response.json()
+        if (!response.ok) throw new Error(result.detail ?? 'No se pudo cargar la distribución por año de estudio.')
+        setStudyYearPoints(result.study_years as StudyYearPoint[])
+      } catch (reason) {
+        if (reason instanceof Error && reason.name === 'AbortError') return
+        setStudyYearError(reason instanceof Error ? reason.message : 'Error de conexión con el servidor.')
+        setStudyYearPoints([])
+      } finally {
+        if (!controller.signal.aborted) setStudyYearLoading(false)
+      }
+    }
+    void loadStudyYearDistribution()
+    return () => controller.abort()
+  }, [selectedYear, mapMetric, selectedProvince, mapRefreshKey])
 
   useEffect(() => {
     if (!equalityYear) return
@@ -490,6 +650,9 @@ export default function App() {
   const selectedMetric = MAP_METRICS.find((item) => item.id === mapMetric) ?? MAP_METRICS[0]
   const territoryMetrics = selectedProvince ? departmentMetrics : provinceMetrics
   const selectedFile = years.find((item) => String(item.year) === selectedYear)?.file_name
+  const predictionYears = years.length
+    ? [...new Set([...years.map((item) => item.year), Math.max(...years.map((item) => item.year)) + 1, Math.max(...years.map((item) => item.year)) + 2])].sort((a, b) => a - b)
+    : []
   return (
     <div className="app-layout">
       <aside className="sidebar">
@@ -574,14 +737,27 @@ export default function App() {
               <EqualityBarCard title="Tasa de promoción por ámbito" subtitle="Urbano y rural · porcentaje" data={equalityStats.by_area} colors={['#e88b32', '#588b52']} />
             </div>}
           <p className="data-note">Tasa de promoción = promovidos / (promovidos + no promovidos). El valor de hombres se calcula restando mujeres al total, según las columnas disponibles en los datos.</p>
-        </section> : section === 'predictive' || section === 'reports' ? <section className="dashboard">
+        </section> : section === 'predictive' ? <section className="dashboard">
           <div className="dashboard-placeholder">
-            <h1>{section === 'predictive' ? 'Predictivo' : 'Reportes'}</h1>
-            <p className="intro">{section === 'predictive'
-              ? 'Seleccioná Nación o una provincia para consultar la predicción de la tasa de no promoción.'
-              : 'Generá informes que integren la información de trayectorias, igualdad y predicciones en un documento.'}</p>
-            <div className="coming-soon"><span className="empty-icon">{section === 'predictive' ? '✦' : '▤'}</span><h2>En preparación</h2><p>Esta página se completará en una próxima etapa.</p></div>
+            <h1>Predictivo</h1>
+            <p className="intro">Elegí el año que querés proyectar y el alcance. El sistema requiere diez años consecutivos anteriores con datos válidos.</p>
           </div>
+          {!years.length && !statsError ? <div className="empty-panel"><span className="empty-icon">✦</span><h2>Todavía no hay datos cargados</h2><p>Subí al menos diez años consecutivos de trayectorias para generar una predicción.</p><button className="secondary-button" onClick={() => navigate('upload')}>Ir a subir archivo →</button></div> : <>
+            <div className="prediction-filters">
+              <label className="dashboard-year"><span>AÑO A PREDECIR</span><select value={predictionYear} onChange={(event) => setPredictionYear(event.target.value)}>{predictionYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
+              <label className="dashboard-year"><span>PROVINCIA</span><select value={predictionProvince} onChange={(event) => setPredictionProvince(event.target.value)}><option>Nación</option>{PROVINCE_NAMES.map((province) => <option key={province}>{province}</option>)}</select></label>
+            </div>
+            {predictionError && <div className="notice error" role="alert">{predictionError}</div>}
+            {predictionLoading ? <div className="loading-panel"><span className="spinner dark" /> Calculando predicción…</div>
+              : predictionResult && !predictionResult.eligible ? <div className="empty-panel prediction-empty"><span className="empty-icon">⌛</span><h2>Aún no alcanza el histórico</h2><p>{predictionResult.message}</p><p className="prediction-years">Años válidos consecutivos disponibles: {predictionResult.available_years?.join(', ') || 'ninguno'}</p><button className="secondary-button" onClick={() => navigate('upload')}>Ir a subir archivo →</button></div>
+                : predictionResult?.eligible && predictionResult.history && predictionResult.forecast_series && typeof predictionResult.forecast === 'number' && <>
+                  <div className="prediction-summary"><div><span>PRONÓSTICO PARA {predictionResult.year}</span><strong>{formatPercent(predictionResult.forecast)}</strong><small>Tasa de no promoción proyectada</small></div><div><span>HISTÓRICO UTILIZADO</span><strong>{predictionResult.history.length} años</strong><small>{predictionResult.history[0]?.year}–{predictionResult.history[predictionResult.history.length - 1]?.year}</small></div><div><span>MODELO</span><strong>Holt</strong><small>Tendencia amortiguada</small></div></div>
+                  <article className="prediction-panel"><div className="panel-heading"><div><h3>Histórico y proyección</h3><p>{predictionResult.province} · todos los ámbitos · ambos sexos</p></div><span className="panel-icon">✦</span></div><PredictionChart data={predictionResult.history} year={predictionResult.year} forecasts={predictionResult.forecast_series} /></article>
+                  <p className="methodology-note"><strong>Cómo se calcula:</strong> tasa de no promoción = no promovidos / (promovidos + no promovidos) × 100. Se usa Holt con tendencia amortiguada y los parámetros de la notebook (nivel 0,6; tendencia 0,2; amortiguación 0,8). Cuando el histórico incluye 2020–2022, 2021 se reemplaza por el promedio de esos años vecinos; para predicciones anteriores a 2022 se usa solo la información previa, como en la validación temporal.</p>
+                </>}
+          </>}
+        </section> : section === 'reports' ? <section className="dashboard">
+          <div className="dashboard-placeholder"><h1>Reportes</h1><p className="intro">Generá informes que integren la información de trayectorias, igualdad y predicciones en un documento.</p><div className="coming-soon"><span className="empty-icon">▤</span><h2>En preparación</h2><p>Esta página se completará en una próxima etapa.</p></div></div>
         </section> : <section className="dashboard">
           <div className="dashboard-title-row">
             <div>{selectedProvince && <button type="button" className="map-back-button" onClick={() => navigate('summary')}>← Todas las provincias</button>}
@@ -618,7 +794,14 @@ export default function App() {
                     <TerritoryDetailList data={territoryMetrics} metric={mapMetric} level={selectedProvince ? 'department' : 'province'} />
                   </article>
                 </div>
-                <p className="methodology-note"><strong>Cómo se calcula:</strong> matrícula relativa = matrícula inicial / población estimada de 4 a 17 años. La población en edad escolar se estima aplicando a la población departamental anual el porcentaje de 4 a 17 años del Censo 2022, que se mantiene constante para todos los años. Promoción = promovidos / (promovidos + no promovidos); no promoción usa la misma base. Para abandono se usa “salidos sin pase” / matrícula inicial como referencia exploratoria: no equivale a la tasa oficial de abandono interanual. Los numeradores provienen de valores absolutos del archivo.</p>
+                <StudyYearHistogram
+                  data={studyYearPoints}
+                  metric={mapMetric}
+                  territoryName={selectedProvince ?? 'Argentina'}
+                  loading={studyYearLoading}
+                  error={studyYearError}
+                />
+                <p className="methodology-note"><strong>Cómo se calcula:</strong> tasa de matrícula = matrícula inicial / población estimada de 4 a 17 años. La población en edad escolar se estima aplicando a la población departamental anual el porcentaje de 4 a 17 años del Censo 2022, que se mantiene constante para todos los años. Promoción = promovidos / (promovidos + no promovidos); no promoción usa la misma base. Para abandono se usa “salidos sin pase” / matrícula inicial como referencia exploratoria: no equivale a la tasa oficial de abandono interanual. Los numeradores provienen de valores absolutos del archivo.</p>
               </>}
         </section>}
       </main>

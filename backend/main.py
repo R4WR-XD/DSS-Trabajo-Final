@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from statsmodels.tsa.holtwinters import Holt
 
 from . import models
 from .database import Base, engine, get_db
@@ -89,6 +90,105 @@ def statistics_years(db: Session = Depends(get_db)):
         {"year": batch.year, "import_id": batch.id, "file_name": batch.file_name}
         for batch in batches
     ]
+
+
+@app.get("/api/predictions")
+def prediction(
+    year: int,
+    province: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Pronostica la tasa de no promoción para un año usando solo años anteriores."""
+    if not 1900 <= year <= 2100:
+        raise HTTPException(422, "El año debe estar entre 1900 y 2100.")
+
+    latest_ids = db.query(func.max(ImportBatch.id).label("id")).group_by(ImportBatch.year).subquery()
+    batches = db.query(ImportBatch).join(latest_ids, ImportBatch.id == latest_ids.c.id).all()
+    batch_by_year = {batch.year: batch for batch in batches if batch.year < year}
+    if not batch_by_year:
+        return {"eligible": False, "year": year, "available_years": [], "required_years": 10,
+                "message": "No hay datos cargados de años anteriores al seleccionado."}
+
+    history = []
+    province_filter = province_key(province) if province else None
+    for data_year, batch in sorted(batch_by_year.items()):
+        query = db.query(Observation).filter(
+            Observation.import_id == batch.id,
+            Observation.sex == "total",
+            Observation.indicator.in_(["promovidos", "nopromo"]),
+        )
+        promoted = not_promoted = 0.0
+        for row in query.all():
+            if province_filter and province_key(row.provincia) != province_filter:
+                continue
+            if row.indicator == "promovidos":
+                promoted += row.value
+            else:
+                not_promoted += row.value
+        denominator = promoted + not_promoted
+        if denominator > 0:
+            history.append({"year": data_year, "rate": not_promoted / denominator * 100})
+
+    # Holt treats adjacent observations as equally spaced. Use the most recent
+    # consecutive run so missing years are never silently compressed.
+    contiguous = []
+    for item in reversed(history):
+        if contiguous and item["year"] != contiguous[-1]["year"] - 1:
+            break
+        contiguous.append(item)
+    contiguous.reverse()
+    if len(contiguous) < 10:
+        return {
+            "eligible": False, "year": year, "available_years": [item["year"] for item in contiguous],
+            "required_years": 10,
+            "message": f"Se necesitan 10 años consecutivos anteriores con datos válidos; hay {len(contiguous)}.",
+        }
+    if contiguous[-1]["year"] >= year:
+        raise HTTPException(422, "El año a predecir debe ser posterior al último año usado.")
+
+    by_year = {item["year"]: item["rate"] for item in contiguous}
+    imputed_year = None
+    # The notebook's final fit interpolates 2021 between 2020 and 2022;
+    # for forecasts made before 2022, avoid using a future observation.
+    if 2021 in by_year:
+        if 2020 in by_year and 2022 in by_year:
+            by_year[2021] = (by_year[2020] + by_year[2022]) / 2
+            imputed_year = 2021
+        elif 2019 in by_year and 2020 in by_year:
+            by_year[2021] = (by_year[2019] + by_year[2020]) / 2
+            imputed_year = 2021
+
+    try:
+        model = Holt(
+            [by_year[item["year"]] for item in contiguous],
+            damped_trend=True,
+            initialization_method="estimated",
+        ).fit(smoothing_level=0.6, smoothing_trend=0.2, damping_trend=0.8)
+        steps = year - contiguous[-1]["year"]
+        forecast_values = model.forecast(steps)
+    except (ValueError, FloatingPointError) as exc:
+        raise HTTPException(422, f"No se pudo ajustar Holt con estos datos: {exc}") from exc
+
+    predicted = float(forecast_values[-1])
+    forecast_series = [
+        {"year": contiguous[-1]["year"] + offset, "rate": float(value)}
+        for offset, value in enumerate(forecast_values, start=1)
+    ]
+    return {
+        "eligible": True,
+        "year": year,
+        "province": province or "Nación",
+        "area": "todos",
+        "sex": "total",
+        "history": [{"year": item["year"], "rate": by_year[item["year"]], "imputed": item["year"] == imputed_year} for item in contiguous],
+        "forecast": predicted,
+        "forecast_series": forecast_series,
+        "forecast_steps": steps,
+        "required_years": 10,
+        "model": "Holt con tendencia amortiguada e imputación de 2021",
+        "parameters": {"smoothing_level": 0.6, "smoothing_trend": 0.2, "damping_trend": 0.8},
+        "imputed_year": imputed_year,
+    }
 
 
 @app.get("/api/statistics")
@@ -285,6 +385,92 @@ def department_map_statistics(year: int, province: str, db: Session = Depends(ge
             }
         )
     return {"year": year, "import_id": batch.id, "province": province, "departments": departments}
+
+
+@app.get("/api/statistics/study-year-distribution")
+def study_year_distribution(
+    year: int,
+    indicator: str = "enrollment_rate",
+    province: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Distribución por año de estudio, excluyendo categorías especiales 13-14 y 20."""
+    batch = (
+        db.query(ImportBatch)
+        .filter(ImportBatch.year == year)
+        .order_by(ImportBatch.id.desc())
+        .first()
+    )
+    if batch is None:
+        raise HTTPException(404, "No hay datos cargados para ese año.")
+    if indicator not in {"enrollment_rate", "promotion_rate", "not_promotion_rate", "abandonment_rate"}:
+        raise HTTPException(400, "Indicador no válido.")
+
+    source_indicators = {
+        "enrollment_rate": ["inicial"],
+        "promotion_rate": ["promovidos", "nopromo"],
+        "not_promotion_rate": ["promovidos", "nopromo"],
+        "abandonment_rate": ["ssp", "inicial"],
+    }[indicator]
+    rows = (
+        db.query(
+            Observation.provincia,
+            Observation.study_year,
+            Observation.indicator,
+            func.sum(Observation.value),
+        )
+        .filter(
+            Observation.import_id == batch.id,
+            Observation.sex == "total",
+            Observation.study_year.in_([str(number) for number in range(1, 13)]),
+            Observation.indicator.in_(source_indicators),
+        )
+        .group_by(Observation.provincia, Observation.study_year, Observation.indicator)
+        .all()
+    )
+    totals: dict[str, dict[str, float]] = {}
+    selected_province = province_key(province) if province else None
+    for observed_province, study_year, source_indicator, value in rows:
+        if selected_province and province_key(observed_province) != selected_province:
+            continue
+        bucket = totals.setdefault(study_year, {})
+        bucket[source_indicator] = bucket.get(source_indicator, 0) + float(value or 0)
+
+    enrollment_total = sum(values.get("inicial", 0) for values in totals.values())
+    points = []
+    for study_year in range(1, 13):
+        values = totals.get(str(study_year), {})
+        if indicator == "enrollment_rate":
+            amount = values.get("inicial")
+            rate = amount / enrollment_total * 100 if amount is not None and enrollment_total > 0 else None
+        elif indicator in {"promotion_rate", "not_promotion_rate"}:
+            promoted = values.get("promovidos")
+            not_promoted = values.get("nopromo")
+            denominator = (promoted or 0) + (not_promoted or 0)
+            numerator = promoted if indicator == "promotion_rate" else not_promoted
+            rate = numerator / denominator * 100 if numerator is not None and denominator > 0 else None
+            amount = numerator
+        else:
+            amount = values.get("ssp")
+            denominator = values.get("inicial")
+            rate = amount / denominator * 100 if amount is not None and denominator is not None and denominator > 0 else None
+
+        points.append(
+            {
+                "study_year": study_year,
+                "label": f"{study_year}° grado" if study_year <= 6 else f"{study_year - 6}° año",
+                "level": "Primaria" if study_year <= 6 else "Secundaria",
+                "value": rate,
+                "amount": amount,
+            }
+        )
+    return {
+        "year": year,
+        "province": province,
+        "indicator": indicator,
+        "distribution_type": "enrollment_share" if indicator == "enrollment_rate" else "rate",
+        "study_years": points,
+    }
 
 
 @app.get("/api/statistics/equality")
