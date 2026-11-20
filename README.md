@@ -51,4 +51,6 @@ El importador también admite una ruta alternativa como argumento. La clave de c
 
 ## Estadísticas
 
-La navegación lateral permite abrir **Estadísticas** y elegir entre los años importados. El panel consulta `GET /api/statistics/years` y `GET /api/statistics?year=2025&indicator=promovidos`, y muestra cobertura, observaciones y gráficos por provincia y año de estudio. Si se vuelve a importar un año, el panel usa la importación más reciente de ese año para evitar sumar cargas repetidas.
+La vista **Resumen** permite elegir un año y un indicador: matriculados, promoción, no promoción o abandono. El mapa provincial y el listado usan la importación más reciente del año seleccionado. Los datos se consultan en `GET /api/statistics/province-map?year=2025`.
+
+Las tasas del panel se calculan de manera exploratoria: promoción = promovidos / (promovidos + no promovidos); no promoción usa el mismo denominador; abandono usa salidos sin pase / matrícula inicial. Esta última razón no equivale a la tasa oficial de abandono interanual. Los conteos se muestran como detalle en el listado.

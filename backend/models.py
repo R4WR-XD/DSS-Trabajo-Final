@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, func
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -54,3 +54,20 @@ class PopulationEstimate(Base):
     sexo: Mapped[str] = mapped_column(String(20), primary_key=True)
     year: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     poblacion: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class SchoolAgePercentage(Base):
+    """Porcentaje censal de población de 4 a 17 años por territorio y sexo."""
+
+    __tablename__ = "school_age_percentages"
+    __table_args__ = (
+        CheckConstraint(
+            "porcentaje_edad_escolar >= 0 AND porcentaje_edad_escolar <= 100",
+            name="ck_school_age_percentages_range",
+        ),
+    )
+
+    provincia: Mapped[str] = mapped_column(String(160), primary_key=True)
+    departamento: Mapped[str] = mapped_column(String(160), primary_key=True)
+    sexo: Mapped[str] = mapped_column(String(20), primary_key=True)
+    porcentaje_edad_escolar: Mapped[float] = mapped_column(Float, nullable=False)

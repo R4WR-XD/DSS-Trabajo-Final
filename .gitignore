@@ -1,1 +1,7 @@
 /pdfcensal/*.pdf
+/pdfcensal/edad_escolar/
+/docsentregables/
+__pycache__/
+*.py[cod]
+/frontend/dist/
+/frontend/tsconfig.tsbuildinfo
